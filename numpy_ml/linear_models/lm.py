@@ -200,7 +200,7 @@ class LogisticRegression:
         gamma = self.gamma
         l1norm = lambda x: np.linalg.norm(x, 1)
         d_penalty = gamma * beta if p == "l2" else gamma * l1norm(beta) * np.sign(beta)
-        return -(np.dot(y - y_pred, X) + d_penalty) / N
+        return -(np.dot(y - y_pred, X) - d_penalty) / N
 
     def predict(self, X):
         """
