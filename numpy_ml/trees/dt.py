@@ -23,7 +23,9 @@ class Leaf:
         `value` is an array of class probabilities if classifier is True, else
         the mean of the region
         """
-        # 此处的value，是一个概率数组，即每个label对应的概率。
+        # 此处的value，
+        # 如果是分类器，是一个概率数组，即每个label对应的概率；返回时可以直接返回，也可以返回最大概率对应的索引值。
+        # 如果是回归器，则是一个标量数值，即计算出的平均值。
         self.value = value
 
 
@@ -124,6 +126,8 @@ class DecisionTree:
         # 对于输入的X中的每一个样本x，即每一行数据
         # 对x进行预测_traverse(x, self.root)
         # 传入的参数为该条样本，及树的根节点对象
+        # self._traverse(x, self.root)即可获得x样本的leaf值。
+        # 最终return的是一个数组，每个元素是该条样本对应的预测值。
         return np.array([self._traverse(x, self.root) for x in X])
 
     def predict_class_probs(self, X):
@@ -142,6 +146,8 @@ class DecisionTree:
             The class probabilities predicted for each example in X
         """
         assert self.classifier, "`predict_class_probs` undefined for classifier = False"
+        # 同predict(self, X)，仅仅是增加了prob=True
+        # 返回的是一个数组，每个元素是该条样本对应的概率数组。
         return np.array([self._traverse(x, self.root, prob=True) for x in X])
 
     def _grow(self, X, Y):
@@ -337,6 +343,12 @@ class DecisionTree:
         return ig
 
     def _traverse(self, X, node, prob=False):
+        """
+        对于传入的待预测样本和根节点，该方法会不断递归，直到达到叶子节点，即返回该叶子节点的值,
+        这个值可以是分类中的label（标量），也可以是概率数组。
+        也可能是回归里的target（标量）。
+        参见leaf的value说明
+        """
 
         # 递归终止条件：如果传入的节点是叶子节点
         if isinstance(node, Leaf):
@@ -344,6 +356,7 @@ class DecisionTree:
                 # 如果是分类器，就返回该叶子的value数组的最大值的索引
                 # value数组长度为类别总数，每个元素代表每个类别的概率
                 # 如果需要返回概率，就直接返回概率数组，例如v = [0,0.4,0.2,0.4]
+                # 注意：由于node此时是Leaf类对象，因此node.value实际是leaf.value，
                 return node.value if prob else node.value.argmax()
             else:
                 # 如果是回归器，返回叶子节点的标量值（就是之前训练时计算的叶子节点里的均值）
