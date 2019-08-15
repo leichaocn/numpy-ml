@@ -1,53 +1,66 @@
 import numpy as np
 
 
+"""这段代码实现了决策树
+
+
+"""
+
+# 节点类
 class Node:
     def __init__(self, left, right, rule):
         self.left = left
         self.right = right
+        #  分割特征的id
         self.feature = rule[0]
+        #  分割特征对应的分割点值
         self.threshold = rule[1]
 
-
+# 叶子类
 class Leaf:
     def __init__(self, value):
         """
         `value` is an array of class probabilities if classifier is True, else
         the mean of the region
         """
+        # 此处的value，是一个概率数组，即每个label对应的概率。
         self.value = value
 
 
 class DecisionTree:
     def __init__(
         self,
+        # 回归 or 分类
         classifier=True,
+        # 最大深度，如果填int值，则限制深度
         max_depth=None,
+        # 设置特征数？
         n_feats=None,
+        # 指标
         criterion="entropy",
+        # 随机数生成的种子
         seed=None,
     ):
         """
-        A decision tree model for regression and classification problems.
+        A decision tree model for regression or classification problems.
 
         Parameters
         ----------
-        classifier : bool
-            Whether to treat target values as categorical (classifier =
-            True) or continuous (classifier = False). Default is True.
-        max_depth: int or None
+        classifier : bool (default: True)
+            Whether to treat target values as categorical (True) or
+            continuous (False)
+        max_depth: int (default: None)
             The depth at which to stop growing the tree. If None, grow the tree
-            until all leaves are pure. Default is None.
-        n_feats : int
+            until all leaves are pure.
+        n_feats : int (default: None)
             Specifies the number of features to sample on each split. If None,
-            use all features on each split. Default is None.
-        criterion : {'mse', 'entropy', 'gini'}
+            use all features on each split.
+        criterion : str (default: 'entropy')
             The error criterion to use when calculating splits. When
             `classifier` is False, valid entries are {'mse'}. When `classifier`
-            is True, valid entries are {'entropy', 'gini'}. Default is
-            'entropy'.
-        seed : int or None
-            Seed for the random number generator. Default is None.
+            is True, valid entries are {'entropy', 'gini'}.
+        seed : int (default: None)
+            Seed for the random number generator
         """
         if seed:
             np.random.seed(seed)
@@ -60,90 +73,158 @@ class DecisionTree:
         self.classifier = classifier
         self.max_depth = max_depth if max_depth else np.inf
 
+        # 如果是回归器，却用了信息增益，报错
         if not classifier and criterion in ["gini", "entropy"]:
             raise ValueError(
                 "{} is a valid criterion only when classifier = True.".format(criterion)
             )
+        # 如果是分类器，却用了MSE，报错
         if classifier and criterion == "mse":
             raise ValueError("`mse` is a valid criterion only when classifier = False.")
 
     def fit(self, X, Y):
         """
-        Fit a binary decision tree to a dataset.
+        Trains a binary decision tree classifier.
 
         Parameters
         ----------
-        X : :py:class:`ndarray <numpy.ndarray>` of shape `(N, M)`
-            The training data of `N` examples, each with `M` features
-        Y : :py:class:`ndarray <numpy.ndarray>` of shape `(N,)`
-            An array of integer class labels for each example in `X` if
-            self.classifier = True, otherwise the set of target values for
-            each example in `X`.
+        X : numpy array of shape (N, M)
+            The training data of N examples, each with M features
+        Y : numpy array of shape (N,)
+            An array of integer labels ranging between [0, n_classes-1] for
+            each example in X if `self.classifier`=True else the set of target
+            values for each example in X.
         """
+        # 如果是分类器，则类别数为max(Y) + 1，因为Y里的类别号是从[0, n_classes-1]
+        # 如果是回归器，则为None
         self.n_classes = max(Y) + 1 if self.classifier else None
+
+        # 如果没有限制特征数，就用X的全部特征，
+        # 否则，就取X特征数和限制特征数，二选一，取最小。
         self.n_feats = X.shape[1] if not self.n_feats else min(self.n_feats, X.shape[1])
+
+        # 用_grow()生成树，返回的是一个根节点Node对象
         self.root = self._grow(X, Y)
 
     def predict(self, X):
         """
-        Use the trained decision tree to classify or predict the examples in `X`.
+        Use the trained decision tree to classify or predict the examples in X.
 
         Parameters
         ----------
-        X : :py:class:`ndarray <numpy.ndarray>` of shape `(N, M)`
-            The training data of `N` examples, each with `M` features
+        X : numpy array of shape (N, M)
+            The training data of N examples, each with M features
 
         Returns
         -------
-        preds : :py:class:`ndarray <numpy.ndarray>` of shape `(N,)`
-            The integer class labels predicted for each example in `X` if
-            self.classifier = True, otherwise the predicted target values.
+        preds : numpy array of shape (N,)
+            The integer class labels predicted for each example in X if
+            classifier = True, otherwise the predicted target values.
         """
+        # 对于输入的X中的每一个样本x，即每一行数据
+        # 对x进行预测_traverse(x, self.root)
+        # 传入的参数为该条样本，及树的根节点对象
         return np.array([self._traverse(x, self.root) for x in X])
 
     def predict_class_probs(self, X):
         """
         Use the trained decision tree to return the class probabilities for the
-        examples in `X`.
+        examples in X.
 
         Parameters
         ----------
-        X : :py:class:`ndarray <numpy.ndarray>` of shape `(N, M)`
-            The training data of `N` examples, each with `M` features
+        X : numpy array of shape (N, M)
+            The training data of N examples, each with M features
 
         Returns
         -------
-        preds : :py:class:`ndarray <numpy.ndarray>` of shape `(N, n_classes)`
-            The class probabilities predicted for each example in `X`.
+        preds : numpy array of shape (N, n_classes)
+            The class probabilities predicted for each example in X
         """
         assert self.classifier, "`predict_class_probs` undefined for classifier = False"
         return np.array([self._traverse(x, self.root, prob=True) for x in X])
 
     def _grow(self, X, Y):
         # if all labels are the same, return a leaf
+        """分裂到仅剩下同一种label时，返回叶子。
+        """
+        # 例如三分类问题，只有一种label，例如我们有6个样本，它们的label是Y=[2,2,2,2,2,2]
         if len(set(Y)) == 1:
             if self.classifier:
+                # 如果是分类器，则生成一个prob数组，
+                # 假如是3分类问题
+                # 初始化prob=[0,0,0],
+                # 由于Y里都是类别2，因此随便找一个元素出来，Y[0]=2
+                # prob[2]=1，即把那个唯一的类别的概率标记为1
+                # 最终prob=[0,0,1],
                 prob = np.zeros(self.n_classes)
                 prob[Y[0]] = 1.0
-            return Leaf(prob) if self.classifier else Leaf(Y[0])
+                # 之后prob=[0,0,1]
+                # 如果是分类器，传给leaf的是一个概率数组prob=[0,0,1],,每个元素对应自己的概率
+                return Leaf(prob)
+            else:
+                # 如果是回归器，则直接把唯一的那个数值target传给leaf，Y[0]=2
+                return Leaf(Y[0])
 
         # if we have reached max_depth, return a leaf
+        """分裂到最大深度限制时，返回叶子。 
+        """
         if self.depth >= self.max_depth:
-            v = np.mean(Y, axis=0)
             if self.classifier:
+                # 如果Y=[3,2,1,3,1],Y中最大的数字为3，因此Y中的索引值范围为0到3，即4个
+                # v = np.bincount(Y, minlength=7)的结果是
+                # v = [0,2,1,2,0,0,0]，表示Y中A类有0个，B类有2个，C类有1个，D类有2个，E/F/G类均为0个。
+                # v = np.bincount(Y, minlength=1)的结果是
+                # v = [0,2,1,2]，表示Y中A类有0个，B类有2个，C类有1个，D类有2个。
+                # 即v的元素个数为max(max(Y)+1,minlength)，
+                # 之所以要设置minlength，是保证最后统计的v的个数，刚好要对应类别个数，避免某些未出现的类别被遗漏
+                # v数组的每个元素，表示该类对应的样本个数，再除以总样本数，就是每种样本的占比或概率
+                # v = [0,0.4,0.2,0.4]
                 v = np.bincount(Y, minlength=self.n_classes) / len(Y)
+            else:
+                v = np.mean(Y, axis=0)
+            # 如果是分类器，每种样本的概率数组v = [0,0.4,0.2,0.4]传给叶子节点。
+            # 如果是回归器，把这些样本的均值，即一个标量，发给叶子节点。
             return Leaf(v)
 
+        # N为样本总量，M为特征数
         N, M = X.shape
         self.depth += 1
+        # 在所有M个特征中，随机找n_feats次特征，采用无放回抽样（replace=False）。
+        # 默认是有放回，replace=True，可以取无穷多次
+        # 无放回，replace=False，可以取最多M次，因此self.n_feats必须小于M
+        # feat_idxs数组长度为self.n_feats，元素最大范围从0到M-1。
+        # 例如M=5，n_feats=3，
+        # feat_idxs=[2,1,4],表示抽了三次，分别是第2/1/4特征，0/3特征未被抽到。
         feat_idxs = np.random.choice(M, self.n_feats, replace=False)
 
         # greedily select the best split according to `criterion`
+        # feat 最优的分割特征的id
+        # thresh 最优的分割特征的id下对应的最佳分割点值
         feat, thresh = self._segment(X, Y, feat_idxs)
+        """根据最优分割特征feat，最优分割点值thresh，来划分左右子树。
+            X[:, feat]=[1,4,3,5,3,1,8,8]
+            thresh=2
+            l =  [0 5]
+            r =  [1 2 3 4 6 7]
+            即np.argwhere()是把符合条件的索引返回来，flatten()即拉成一维数组
+            l是≤thresh的值在X[:, feat]里的索引值列表
+            r是＞thresh的值在X[:, feat]里的索引值列表
+        """
         l = np.argwhere(X[:, feat] <= thresh).flatten()
         r = np.argwhere(X[:, feat] > thresh).flatten()
 
         # grow the children that result from the split
+        """递归式生长
+        _grow()：
+        传入的是一堆样本的X和Y，
+        返回的是一个分裂节点（记录着左节点、右节点、分割特征、分割点值）
+        首次调用_grow()，等左右子树生长完了，即返回根节点。
+        左子树、右子树的生长过程，又重复这样的递归。
+        直到最终到达了叶子节点
+        1.单侧子树只有一种label，即上面的 if len(set(Y)) == 1 来处理
+        2.最大深度限制，即上面的 if self.depth >= self.max_depth 来处理
+        """
         left = self._grow(X[l, :], Y[l])
         right = self._grow(X[r, :], Y[r])
         return Node(left, right, (feat, thresh))
@@ -156,14 +237,44 @@ class DecisionTree:
         best_gain = -np.inf
         split_idx, split_thresh = None, None
         for i in feat_idxs:
+            """获取分割值的方法非常简单
+            解释如下：
+            假设某列特征的序列为vals=[1,4,3,5,3,1,8,8]
+            np.unique的作用就是去重，同时排序：
+            levels =  [1 3 4 5 8]
+            然后分别准备一个去尾数组，一个去头数组：
+            levels[:-1] =  [1 3 4 5]
+            levels[1:] =  [3 4 5 8]
+            两个数组的和，是对应元素的相加：
+            levels[:-1] + levels[1:] =  [ 4  7  9 13]
+            数组除以2，即对应元素除以2：
+            thresholds =  [2.  3.5 4.5 6.5]
+            核心思想是分割点正是levels里所有相邻元素的平均值（或者中位值）
+            """
             vals = X[:, i]
             levels = np.unique(vals)
             thresholds = (levels[:-1] + levels[1:]) / 2
+
+            """获取本特征i的所有分割增益
+            假设某列特征的序列为vals = [1,4,3,5,3,1,8,8]
+            t依次取从thresholds =  [2.  3.5 4.5 6.5]取出不同的分割点。
+            即可获得特征id为i的特征对应的分割增益数组gains，每个元素为一个分割点的分割增益。
+            gains里的最大值，就是本特征i的最佳表现。
+            """
             gains = np.array([self._impurity_gain(Y, t, vals) for t in thresholds])
 
+            """遍历feat_idxs里的每一个特征i
+            最终保存分的最好的那个特征信息，即：
+            最佳分割特征split_idx，
+            最佳分割特征的最佳分割点split_thresh
+            最佳分割特征的最佳分割点带来的增益best_gain
+            
+            """
             if gains.max() > best_gain:
                 split_idx = i
                 best_gain = gains.max()
+                # 因为gains是依次迭代thresholds中的元素获得的数组，
+                # 因此gains.argmax()正是最佳分割点的索引值。
                 split_thresh = thresholds[gains.argmax()]
 
         return split_idx, split_thresh
@@ -181,9 +292,30 @@ class DecisionTree:
         elif self.criterion == "mse":
             loss = mse
 
+
+        """获取父节点的信息量
+           记住：信息量仅与Y有关，与X无关！
+           因为信息量仅仅取决于label的丰富度，越丰富，信息量越大。
+        """
         parent_loss = loss(Y)
 
         # generate split
+        """分割左右子树
+            feat_values = np.array([1, 4, 3, 5, 3, 1, 8, 8])
+            split_thresh = 2
+            raw=np.argwhere(feat_values <= split_thresh)
+            left = np.argwhere(feat_values <= split_thresh).flatten()
+            right = np.argwhere(feat_values > split_thresh).flatten()
+            可见以下输出：
+            raw =  [[0]
+                    [5]]
+            left =  [0 5]
+            right =  [1 2 3 4 6 7]
+            即np.argwhere()是把符合条件的索引返回来，flatten()即拉成一维数组
+            left是≤split_thresh的值在feat_values里的索引值列表
+            right是＞split_thresh的值在feat_values里的索引值列表
+            索引值列表的长度也就是子树的size，下面会用到。
+        """
         left = np.argwhere(feat_values <= split_thresh).flatten()
         right = np.argwhere(feat_values > split_thresh).flatten()
 
@@ -193,7 +325,11 @@ class DecisionTree:
         # compute the weighted avg. of the loss for the children
         n = len(Y)
         n_l, n_r = len(left), len(right)
+        # 求左右子树的信息量，
+        # 用Y[left]来获取左子树的label列表，
+        # 用Y[right]来获取右子树的label列表，
         e_l, e_r = loss(Y[left]), loss(Y[right])
+        # 本次分割的信息量=左子树的数量占比*左子树的信息量+右子树的数量占比*右子树的信息量。
         child_loss = (n_l / n) * e_l + (n_r / n) * e_r
 
         # impurity gain is difference in loss before vs. after split
@@ -201,18 +337,38 @@ class DecisionTree:
         return ig
 
     def _traverse(self, X, node, prob=False):
+
+        # 递归终止条件：如果传入的节点是叶子节点
         if isinstance(node, Leaf):
             if self.classifier:
+                # 如果是分类器，就返回该叶子的value数组的最大值的索引
+                # value数组长度为类别总数，每个元素代表每个类别的概率
+                # 如果需要返回概率，就直接返回概率数组，例如v = [0,0.4,0.2,0.4]
                 return node.value if prob else node.value.argmax()
-            return node.value
+            else:
+                # 如果是回归器，返回叶子节点的标量值（就是之前训练时计算的叶子节点里的均值）
+                return node.value
+
+        # 拿到节点对象里保存的特征索引node.feature，
+        # X因为是一条样本，因此为一维数组，通过X[node.feature]取出该节点的分裂特征的值
+        # 如果该值≤节点里的分裂点值，就继续遍历左子树（传入参数：样本、节点的左节点）
         if X[node.feature] <= node.threshold:
             return self._traverse(X, node.left, prob)
-        return self._traverse(X, node.right, prob)
+        else:
+            # 否则，就遍历右子树（传入参数：样本、节点的左节点）
+            return self._traverse(X, node.right, prob)
 
-
+# 以下三个函数是计算loss的三个方法
 def mse(y):
     """
     Mean squared error for decision tree (ie., mean) predictions
+    """
+    """对于回归问题，用mse来计算
+      np.mean(y)是预测值，y是真实值的数组，
+      均方误差正是求取所有样本 残差的平方 的均值。某一样本的残差正是该样本真实值减去模型预测值。
+      这个mse越大，说明预测的越不准
+      这个mse越小，说明预测得越准
+      所以父节点的mse减去左右子树的mse，如果很大，说明这个分裂非常成功。
     """
     return np.mean((y - np.mean(y)) ** 2)
 
@@ -220,6 +376,24 @@ def mse(y):
 def entropy(y):
     """
     Entropy of a label sequence
+    """
+    """
+    y = [3,2,1,3,1],A类=0，B类=1，C类=2，D类=3
+    hist = [0,2,1,2]，表示Y中A类有0个，B类有2个，C类有1个，D类有2个。
+    ps =  [0.  0.4 0.2 0.4],表示每个类对应的概率。
+    
+    信息熵 = -sum[ pi*log2（pi）]
+    对于 ps =  [0.  0.4 0.2 0.4]
+    entropy = -[0.4*log2(0.4)+0.2*log2(0.2)+0.4*log2(0.4)]
+    or = -[0.4ln0.4+0.2ln0.2+0.4ln0.4]/ln2
+    注意：是在所有类别上求和，也就是最多K个乘积项（设K为类别总数）
+    
+    [p * np.log2(p) for p in ps if p > 0]
+    = [-0.5287712379549449, -0.46438561897747244, -0.5287712379549449]
+    
+    -np.sum(·)
+    = 1.5219280948873621
+    
     """
     hist = np.bincount(y)
     ps = hist / np.sum(hist)
@@ -230,6 +404,16 @@ def gini(y):
     """
     Gini impurity (local entropy) of a label sequence
     """
+    """
+        y = [3,2,1,3,1],A类=0，B类=1，C类=2，D类=3
+        hist = [0,2,1,2]，表示Y中A类有0个，B类有2个，C类有1个，D类有2个。
+        N=5
+        gini=sum[pi*(1-pi)]=1-sum[pi**2]
+        """
     hist = np.bincount(y)
-    N = np.sum(hist)
-    return 1 - sum([(i / N) ** 2 for i in hist])
+    ps = hist / np.sum(hist)
+    return 1-sum([i**2 for i in ps])
+    # # 原作者的定义。
+    # N = np.sum(hist)
+    # # i / N 即为pi
+    # return 1 - sum([(i / N) ** 2 for i in hist])
